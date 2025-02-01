@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from alpaca.data.requests import NewsRequest
 from common_lib.alpaca_helpers.async_impl.news_client import AsyncNewsClient
+from common_lib.mcp import get_current_market_time
 from mcp.server.fastmcp.resources import ResourceTemplate
 from common_lib.util import datetime_to_time_ago
 from common_lib.alpaca_helpers.env import AlpacaSettings
@@ -22,8 +23,8 @@ async def get_news(symbols: str, days_back: int = 1) -> str:
     """
     request = NewsRequest(
         symbols=symbols,
-        start=(settings.asof or datetime.now()) - timedelta(days=days_back),
-        end=settings.asof or datetime.now(),
+        start=get_current_market_time() - timedelta(days=days_back),
+        end=get_current_market_time(),
         sort="asc",
     )
     all_news = []
@@ -43,19 +44,19 @@ async def get_news(symbols: str, days_back: int = 1) -> str:
 
 
 async def latest_headline(symbol: str) -> str:
+    market_time = get_current_market_time()
+
     request = NewsRequest(
         symbols=symbol,
-        start=(settings.asof or datetime.now()) - timedelta(hours=4),
-        end=settings.asof or datetime.now(),
+        start=market_time - timedelta(hours=4),
+        end=market_time,
         sort="desc",
     )
     news_items = (await news_client.get_news(request)).data["news"]
     if len(news_items) == 0:
         return "No headline from the past 4 hours"
 
-    return (
-        f"*{news_items[0].headline}*\n{datetime_to_time_ago(news_items[0].updated_at, settings.asof)}"
-    )
+    return f"*{news_items[0].headline}*\n{datetime_to_time_ago(news_items[0].updated_at)}"
 
 
 latest_headline_resource = ResourceTemplate(

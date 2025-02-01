@@ -1,14 +1,16 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 from typing import Optional
 from common_lib.alpaca_helpers.async_impl.stock_client import (
     AsyncStockHistoricalDataClient,
 )
 from common_lib.alpaca_helpers.env import AlpacaSettings
+from common_lib.mcp import get_current_market_time, is_realtime
 import pandas as pd
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from pandas.tseries.offsets import BDay, BusinessHour
+from mcp.server.lowlevel.server import request_ctx
 import pytz
 from ta.indicators import add_indicators_to_bars_df, indicator_min_bars_back, plot_bars
 from mcp.server.fastmcp import Image
@@ -32,7 +34,10 @@ def get_timeframe(unit: str, bar_size: int) -> TimeFrame:
     """Convert unit and bar_size to Alpaca TimeFrame"""
     unit = unit.upper()
     if unit == "MINUTE":
-        return TimeFrame(amount=bar_size, unit=TimeFrameUnit.Minute)
+        if bar_size <= 59:
+            return TimeFrame(amount=bar_size, unit=TimeFrameUnit.Minute)
+        else:
+            return TimeFrame(amount=bar_size // 60, unit=TimeFrameUnit.Hour)
     elif unit == "HOUR":
         return TimeFrame(amount=bar_size, unit=TimeFrameUnit.Hour)
     elif unit == "DAILY":
@@ -62,13 +67,13 @@ def default_bars_back(unit: str, bar_size: int) -> int:
 
 
 def bars_back_to_datetime(
-    unit: str, bar_size: int, bars_back: int, extended_hours=False
+    unit: str, bar_size: int, bars_back: int
 ) -> datetime:
-    now = settings.asof or datetime.now(tz=pytz.timezone("US/Eastern"))
+    now = get_current_market_time()
     if unit == "Minute":
         total_minutes = bars_back * bar_size
         hours = (total_minutes // 60) + 1
-        return bars_back_to_datetime("Hour", 1, hours, extended_hours)
+        return bars_back_to_datetime("Hour", 1, hours)
 
     elif unit == "Hour":
         # 1 'business hour' bar => skip Sat/Sun
@@ -88,7 +93,8 @@ def bars_back_to_datetime(
 
     else:
         raise ValueError(f"Unknown unit: {unit}")
-    return now - (interval * (bars_back + 1))
+        
+    return now - (interval * (bars_back + 10)) # the + 10 is a safety margin
 
 
 async def get_alpaca_bars(
@@ -97,7 +103,6 @@ async def get_alpaca_bars(
     bars_back: Optional[int] = None,
     bar_size: int = 1,
     indicators: Optional[str] = None,
-    extended_hours: bool = False,
     truncate_bars: bool = True,
 ) -> str:
     """Get historical bars data for a stock symbol"""
@@ -106,19 +111,27 @@ async def get_alpaca_bars(
 
     if indicators:
         min_bars_back = max(indicator_min_bars_back(i) for i in indicators.split(","))
-        if bars_back is not None:
-            bars_back = min_bars_back + bars_back
+        bars_back = min_bars_back + (bars_back or 0)
+    else:
+        bars_back = original_bars_back
 
-    if bars_back is None:
-        bars_back = default_bars_back(unit, bar_size)
-
-    start = bars_back_to_datetime(unit, bar_size, bars_back, extended_hours)
+    start = bars_back_to_datetime(unit, bar_size, bars_back)
+    if is_realtime() or timeframe.unit in [TimeFrameUnit.Minute, TimeFrameUnit.Hour]:
+        end = get_current_market_time()
+    else:
+        if timeframe.unit == TimeFrameUnit.Day:
+            end = get_current_market_time() - timedelta(days=1)
+        elif timeframe.unit == TimeFrameUnit.Week:
+            end = get_current_market_time() - timedelta(days=7)
+        elif timeframe.unit == TimeFrameUnit.Month:
+            end = get_current_market_time() - timedelta(days=30)
+            
     # Create the request
     request = StockBarsRequest(
         symbol_or_symbols=symbol,
         timeframe=timeframe,
         start=start,
-        end=settings.asof or datetime.now(),
+        end=end,
         adjustment="all",
         feed="iex",  # todo: switch to SIP when subscribed to real time alpaca data
     )
@@ -153,7 +166,6 @@ async def plot_alpaca_bars_with_indicators(
     bar_size: int,
     indicators: str = "",
     bars_back: Optional[int] = None,
-    extended_hours: bool = False,
 ) -> tuple[Image, str]:
     """Plot bars with indicators using Alpaca data"""
     bars_back_requested = bars_back if bars_back else default_bars_back(unit, bar_size)
@@ -164,7 +176,6 @@ async def plot_alpaca_bars_with_indicators(
             bar_size=bar_size,
             indicators=indicators,
             bars_back=bars_back_requested,
-            extended_hours=extended_hours,
             truncate_bars=False,
         ),
         lines=True,
@@ -177,7 +188,10 @@ async def plot_alpaca_bars_with_indicators(
     bars_df.set_index("datetime", inplace=True)
 
     # Generate the plot
-    buf = plot_bars(bars_df)
+    buf = plot_bars(
+        bars_df.iloc[-bars_back_requested:],
+        f"{symbol} bar size: {bar_size} bar unit: {unit} bar count: {bars_back_requested} ",
+    )
 
     bars_df.reset_index(inplace=True)
     bars_df["datetime"] = bars_df["datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -186,6 +200,5 @@ async def plot_alpaca_bars_with_indicators(
     return (
         Image(data=buf.read(), format="png"),
         bars_df.iloc[-bars_back_requested:]
-        .loc[:, ["datetime", "open", "low", "high", "close", "volume", "vwap"]]
         .to_json(orient="records", lines=True),
     )
