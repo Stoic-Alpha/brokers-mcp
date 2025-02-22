@@ -1,15 +1,19 @@
 import asyncio
+import logging
 from alpaca.trading.requests import LimitOrderRequest, TakeProfitRequest, StopLossRequest, GetOrderByIdRequest, ReplaceOrderRequest, ClosePositionRequest, TrailingStopOrderRequest
 from alpaca.trading.enums import OrderSide, OrderClass, OrderStatus, OrderType, TimeInForce
 
 from common_lib.alpaca_helpers.async_impl.trading_client import AsyncTradingClient
-from common_lib.alpaca_helpers.simulation.trading_client import SimulationTradingClient
+from common_lib.alpaca_helpers.simulation.simulation_trading_db import SimulationTradingDatabase
+from common_lib.alpaca_helpers.simulation.simulation_trading_client import SimulationTradingClient
 from common_lib.alpaca_helpers.env import AlpacaSettings
 from common_lib.util import is_market_open
+logger = logging.getLogger(__name__)
 
 settings = AlpacaSettings()
 if settings.simulation:
-    trading_client = SimulationTradingClient(settings.api_key, settings.api_secret)
+    simulation_trading_database: SimulationTradingDatabase = SimulationTradingDatabase(settings.simulation_database_url)
+    trading_client = SimulationTradingClient(simulation_trading_database)
 else:
     trading_client = AsyncTradingClient(settings.api_key, settings.api_secret)
 
@@ -35,7 +39,7 @@ async def place_order(
         take_profit: The take profit price, optional
         stop_loss: The stop loss price, optional
     """
-    if not is_market_open():
+    if not is_market_open() and not settings.simulation:
         raise Exception("Market is not open")
 
     if buy_sell.upper() == "BUY":
@@ -72,7 +76,7 @@ async def place_order(
         retries -= 1
         await asyncio.sleep(0.1)
         submitted_order = await trading_client.get_order_by_id(submitted_order.id, GetOrderByIdRequest(nested=True))
-    
+
     if submitted_order.status in [OrderStatus.PENDING_CANCEL, OrderStatus.CANCELED, OrderStatus.EXPIRED, OrderStatus.REJECTED, OrderStatus.STOPPED, OrderStatus.SUSPENDED, OrderStatus.PENDING_NEW]:
         raise Exception(f"Order failed to be placed: {submitted_order.status.value}")
 
