@@ -1,13 +1,13 @@
 from mcp.server.fastmcp import FastMCP
 
-from alpaca_api.tools import place_order, cancel_order, modify_order, liquidate_position, place_trailing_stop
 from alpaca_api.resources import (
     account_summary_resource,
     completed_orders_resource,
     open_orders_resource,
     portfolio_resource,
-    order_filled_resource,
+    order_filled_resource
 )
+from alpaca_api.tools import place_order, cancel_order, modify_order, liquidate_position, place_trailing_stop, init_simulation_db
 
 mcp = FastMCP("Brokerage Service")
     
@@ -22,6 +22,7 @@ mcp.add_tool(cancel_order)
 mcp.add_tool(modify_order)
 mcp.add_tool(liquidate_position)
 mcp.add_tool(place_trailing_stop)
+mcp.add_tool(init_simulation_db)
 
 
 def main():

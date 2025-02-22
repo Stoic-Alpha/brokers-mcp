@@ -88,6 +88,11 @@ async def place_order(
 
     return placed_order_string
 
+async def init_simulation_db():
+    if settings.simulation:
+        await trading_client.db.create_tables()
+
+
 async def modify_order(
     order_id: str,
     limit_price: float | None = None,
