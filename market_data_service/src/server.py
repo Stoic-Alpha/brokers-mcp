@@ -35,7 +35,7 @@ mcp.add_tool(
         indicators: Optional indicators to plot, comma-separated. Supported: {SUPPORTED_INDICATORS}
     
     Returns:
-        str: json records with lines=true
+        str: json records with lines=true. Parse with pd.read_json(..., lines=True)
     """,
 )
 

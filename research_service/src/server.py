@@ -85,8 +85,9 @@ async def scan_for_stocks(query: str) -> str:
     
 
 # todo: implement it without using tradingview for historical data
-@mcp.tool(description="Get a summary of important metrics for a given symbol")
-async def get_symbol_summary(symbol: str) -> str:
+@mcp.tool(description="Get summaries of important metrics for given symbols (comma separated)")
+async def get_symbol_summaries(symbols: str) -> str:
+    symbol_list = [s.strip() for s in symbols.split(",")]
     if is_realtime():
         columns = [
             "name", "close", "volume", "market_cap_basic",
@@ -101,7 +102,7 @@ async def get_symbol_summary(symbol: str) -> str:
         ]
     query = (Query()
         .select(*columns)
-        .where(Column("name") == symbol)
+        .where(Column("name").isin(symbol_list))
     )
     result = (await query.async_get_scanner_data())[1]
     try:
@@ -115,7 +116,7 @@ async def get_symbol_summary(symbol: str) -> str:
 
 @mcp.resource(uri="resource://get_symbol_summary/{symbol}", name="get_symbol_summary")
 async def get_symbol_summary_resource(symbol: str) -> str:
-    return await get_symbol_summary(symbol)
+    return await get_symbol_summaries(symbol)
 
 if __name__ == "__main__":
     mcp.run(transport="sse")

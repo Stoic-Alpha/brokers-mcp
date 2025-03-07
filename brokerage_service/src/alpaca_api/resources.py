@@ -80,7 +80,8 @@ portfolio_resource = ResourceTemplate(
             "description": "The symbol of the portfolio to get holdings for",
             "default": "all"
         }
-    }
+    },
+    mime_type="application/json"
 )
 
 async def get_account_summary() -> Dict[str, Any]:
@@ -119,6 +120,7 @@ account_summary_resource = FunctionResource(
     name=get_account_summary.__name__,
     description=get_account_summary.__doc__,
     fn=get_account_summary,
+    mime_type="application/json"
 )
 
 async def get_completed_orders(symbol: str) -> Dict[str, List[Dict[str, Any]]]:
@@ -184,7 +186,8 @@ completed_orders_resource = ResourceTemplate(
             "description": "The symbol of the orders to get",
             "default": "all"
         }
-    }
+    },
+    mime_type="application/json"
 )
 
 async def get_open_orders(symbol: str) -> Dict[str, List[Dict[str, Any]]]:
@@ -248,7 +251,8 @@ open_orders_resource = ResourceTemplate(
             "description": "The symbol of the orders to get",
             "default": "all"
         }
-    }
+    },
+    mime_type="application/json"
 )
 
 async def has_order_filled(order_id: str) -> Dict[str, Any]:
@@ -285,5 +289,6 @@ order_filled_resource = ResourceTemplate(
             "type": "string",
             "description": "The ID of the order to check",
         }
-    }
+    },
+    mime_type="application/json"
 )
