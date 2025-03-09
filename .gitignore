@@ -15,3 +15,5 @@ logs/
 .env
 
 .langgraph_api/
+
+.vscode/
