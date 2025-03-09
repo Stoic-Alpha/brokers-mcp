@@ -1,4 +1,3 @@
-import os
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -8,7 +7,9 @@ from alpaca_api.market_data import (
     SUPPORTED_INDICATORS,
     get_alpaca_bars as get_bars,
     plot_alpaca_bars_with_indicators as plot_bars_with_indicators,
+    get_most_recent_bar
 )
+# from options import get_option_chain, get_option_expirations
 from mcp.server.fastmcp import FastMCP
 
 logging.basicConfig(level=logging.DEBUG)
@@ -32,7 +33,7 @@ mcp.add_tool(
             Default is 1.
         bars_back: Number of bars back to fetch. Max 57,600 for intraday. No limit for 
             daily/weekly/monthly.
-        indicators: Optional indicators to plot, comma-separated. Supported: {SUPPORTED_INDICATORS}
+        indicators: Optional indicators to plot, comma-separated. Supported: {list(SUPPORTED_INDICATORS.keys())}
     
     Returns:
         str: json records with lines=true. Parse with pd.read_json(..., lines=True)
@@ -54,7 +55,7 @@ mcp.add_tool(
             Default is 1.
         bars_back: Number of bars back to fetch. Max 57,600 for intraday. No limit for 
             daily/weekly/monthly.
-        indicators: Optional indicators to plot, comma-separated. Supported: {SUPPORTED_INDICATORS}
+        indicators: Optional indicators to plot, comma-separated. Supported: {list(SUPPORTED_INDICATORS.keys())}
     
     Returns:
         A tuple of (Image, str) where the first element is the chart image and the second element is the bars (and indicators) data in json records with lines=true
@@ -64,6 +65,10 @@ mcp.add_tool(get_news)
 mcp._resource_manager._templates[latest_headline_resource.uri_template] = (
     latest_headline_resource
 )
+mcp.add_tool(get_most_recent_bar)
+# mcp.add_tool(get_option_chain)
+# mcp.add_tool(get_option_expirations)
+    
 
 def main():
     mcp.run(transport="sse")

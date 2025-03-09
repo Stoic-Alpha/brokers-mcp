@@ -13,7 +13,8 @@ from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from pandas.tseries.offsets import BDay, BusinessHour
 from ta.indicators import add_indicators_to_bars_df, indicator_min_bars_back, plot_bars
 from mcp.server.fastmcp import Image
-
+import asyncio
+import json
 # Initialize Alpaca client
 settings = AlpacaSettings()
 stock_client = AsyncStockHistoricalDataClient(settings.api_key, settings.api_secret)
@@ -231,3 +232,52 @@ async def plot_alpaca_bars_with_indicators(
         bars_df.iloc[-(bars_back or plot_bar_count):]
         .to_json(orient="records", lines=True),
     )
+
+
+async def get_most_recent_bar(symbols: str, bar_size: int, bar_unit: str) -> str:
+    """
+    Get the most recent OHLCV bar for a given symbol, bar size, and bar unit.
+    Possible bar units are: Minute, Hour, Daily, Weekly, Monthly.
+
+    Args:
+        symbols: The symbol to get the most recent bar for (comma separated).
+        bar_size: The size of the bar to get.
+        bar_unit: The unit of the bar to get.
+
+    Returns:
+        The most recent OHLCV bar for the given symbol, bar size, and bar unit in json format.
+    
+    Example:
+        symbols: "AAPL,MSFT"
+        bar_size: 1
+        bar_unit: "Hour"
+
+        Returns:
+        {
+            "AAPL": {
+                "open": 100,
+                "high": 110,
+                "low": 90,
+                "close": 105,
+                "volume": 10000,
+            },
+            "MSFT": {
+                "open": 200,
+                "high": 210,
+                "low": 190,
+                "close": 205,
+                "volume": 20000,
+            }
+        }
+    """
+    symbol_list = symbols.split(",")
+    dfs = await asyncio.gather(*[
+        get_alpaca_bars(symbol, bar_unit, 1, bar_size) for symbol in symbol_list
+    ])
+    bars = {}
+    for df, symbol in zip(dfs, symbol_list):
+        parsed = pd.read_json(df, orient="records", lines=True)
+        ohlcv = parsed.iloc[0].to_dict()
+        del ohlcv["datetime"]
+        bars[symbol] = ohlcv
+    return json.dumps(bars)
