@@ -1,6 +1,8 @@
 # Use a Python base image (version can be adjusted)
 FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim
 
+RUN apt update && apt install -y netcat-traditional && rm -rf /var/lib/apt/lists/*
+
 # Set the working directory
 WORKDIR /app
 
