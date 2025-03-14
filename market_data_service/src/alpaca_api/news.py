@@ -5,21 +5,18 @@ from common_lib.mcp import get_current_market_time
 from mcp.server.fastmcp.resources import ResourceTemplate
 from common_lib.util import datetime_to_time_ago
 from common_lib.alpaca_helpers.env import AlpacaSettings
+from pydantic import Field
 
 settings = AlpacaSettings()
 news_client = AsyncNewsClient(settings.api_key, settings.api_secret)
 
 
-async def get_news(symbols: str, days_back: int = 1) -> str:
+async def get_news(
+    symbols: str = Field(..., description="Symbols to fetch news for, separated by commas"),
+    days_back: int = Field(1, description="Number of days back to fetch news for"),
+) -> str:
     """
-    Get news for a list of symbols, separated by commas
-
-    Args:
-        symbols: list[str]
-        days_back: int = 1
-
-    Returns:
-        str
+    Get news headlines for a list of symbols
     """
     request = NewsRequest(
         symbols=symbols,

@@ -3,6 +3,7 @@ from logging import getLogger
 from urllib.error import HTTPError
 from common_lib.mcp import get_current_market_time, is_realtime
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 import tradingview_screener
 from tradingview_screener import *
 from async_screener import Query, Scanner
@@ -19,15 +20,17 @@ mcp = FastMCP("Research Service")
     name="scan_from_scanner",
     description=f"""Use a scanner from the built-in scanner list.
 
-Args:
-    list_name: Name of the built-in scanner to use
-
-Returns:
-    str: Scanner results as a string
-
 Available lists: {tradingview_screener.Scanner.names()}"""
 )
-async def scan_from_scanner(list_name: str) -> str:
+async def scan_from_scanner(
+    list_name: str = Field(..., description="Name of the built-in scanner to use")
+) -> str:
+    """
+    Use a scanner from the built-in scanner list to get stock screening results.
+
+    Returns:
+        str: Scanner results as a string
+    """
     try:
         result = (await getattr(Scanner, list_name).async_get_scanner_data())[1]
         return str(result)
@@ -36,13 +39,13 @@ async def scan_from_scanner(list_name: str) -> str:
         raise ValueError("Error while executing query: " + repr(e))
 
 @mcp.tool(name="search_available_columns")
-async def search_available_columns(query: str) -> str:
-    """Search for columns that match the given query.
+async def search_available_columns(
+    query: str = Field(..., description="Search term to find matching column names")
+) -> str:
+    """
+    Search for available columns in TradingView Screener.
     For example: when query='Average', the tool will return all the columns that
     represent averages like {'average_volume_60d_calc', 'EMA20', 'EMA10', 'SMA10', etc.}
-
-    Args:
-        query: Search term to find matching column names
 
     Returns:
         str: Set of matching column names as a string
@@ -59,14 +62,15 @@ async def search_available_columns(query: str) -> str:
 
 @mcp.tool(
     name="scan_for_stocks",
-    description=(
-        "Scan for stocks based on a query from the tradingview_screener library"
-        "Args: query: Query string in tradingview_screener format to filter stocks"
-        "Returns: str: Scanner results as a string"
-        f"{QUERY_LANGUAGE_DOCS}"
-    )
 )
-async def scan_for_stocks(query: str) -> str:
+async def scan_for_stocks(
+    query: str = Field(..., description="An instance of `Query` from TradingView Screener query language in Python")
+) -> str:
+    """
+    Scan for stocks using a declarative query language utilizing TradingView's Screener API.
+    Returns:
+        str: Scanner results dataframe as a string
+    """
     try:
         query_object = eval(query)
         try:
@@ -84,9 +88,16 @@ async def scan_for_stocks(query: str) -> str:
         raise ValueError("Error while executing query: " + repr(e))
     
 
-# todo: implement it without using tradingview for historical data
-@mcp.tool(description="Get summaries of important metrics for given symbols (comma separated)")
-async def get_symbol_summaries(symbols: str) -> str:
+@mcp.tool(description="Get summaries of important metrics for given symbols")
+async def get_symbol_summaries(
+    symbols: str = Field(..., description="Comma-separated list of stock symbols to get summaries for")
+) -> str:
+    """
+    Get summaries of important metrics for given symbols.
+
+    Returns:
+        str: JSON string containing summary data for the requested symbols
+    """
     symbol_list = [s.strip() for s in symbols.split(",")]
     if is_realtime():
         columns = [
@@ -115,7 +126,15 @@ async def get_symbol_summaries(symbols: str) -> str:
     return result.to_json(orient="records")
 
 @mcp.resource(uri="resource://get_symbol_summary/{symbol}", name="get_symbol_summary")
-async def get_symbol_summary_resource(symbol: str) -> str:
+async def get_symbol_summary_resource(
+    symbol: str = Field(..., description="Stock symbol to get summary for")
+) -> str:
+    """
+    Get summary of important metrics for a single symbol.
+
+    Returns:
+        str: JSON string containing summary data for the requested symbol
+    """
     return await get_symbol_summaries(symbol)
 
 if __name__ == "__main__":

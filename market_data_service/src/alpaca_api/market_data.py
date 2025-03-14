@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from io import StringIO
 import logging
 import math
 from typing import Optional
@@ -11,10 +12,12 @@ import pandas as pd
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from pandas.tseries.offsets import BDay, BusinessHour
+from pydantic import Field
 from ta.indicators import add_indicators_to_bars_df, indicator_min_bars_back, plot_bars
 from mcp.server.fastmcp import Image
 import asyncio
 import json
+
 # Initialize Alpaca client
 settings = AlpacaSettings()
 stock_client = AsyncStockHistoricalDataClient(settings.api_key, settings.api_secret)
@@ -120,14 +123,15 @@ def bars_back_to_datetime(
 
 
 async def get_alpaca_bars(
-    symbol: str,
-    unit: str,
-    bars_back: Optional[int] = None,
-    bar_size: int = 1,
-    indicators: Optional[str] = None,
-    truncate_bars: bool = True,
+    symbol: str = Field(..., description="The symbol to fetch bars for"),
+    unit: str = Field(..., description="Unit of time for the bars. Possible values are Minute, Hour, Daily, Weekly, Monthly."),
+    bars_back: int = Field(..., description="Number of bars back to fetch."),
+    bar_size: int = Field(..., description="Interval that each bar will consist of"),
+    indicators: str = Field(default="", description=f"Optional indicators to plot, comma-separated. Supported: {list(SUPPORTED_INDICATORS.keys())}"),
+    truncate_bars: bool = Field(default=True, description="Whether to truncate the bars to the requested bars back."),
+    include_outside_hours: bool = Field(default=False, description="Whether to include data from pre-market and post-market sessions."),
 ) -> str:
-    """Get historical bars data for a stock symbol"""
+    """Get historical bars data for a stock symbol in csv format"""
     timeframe = get_timeframe(unit, bar_size)
     original_bars_back = bars_back or default_bars_back(unit, bar_size)
 
@@ -137,16 +141,26 @@ async def get_alpaca_bars(
     else:
         bars_back = original_bars_back
 
-    start = bars_back_to_datetime(unit, bar_size, bars_back)
-    if is_realtime() or timeframe.unit in [TimeFrameUnit.Minute, TimeFrameUnit.Hour]:
-        end = get_current_market_time()
-    else:
-        if timeframe.unit == TimeFrameUnit.Day:
-            end = get_current_market_time() - timedelta(days=1)
-        elif timeframe.unit == TimeFrameUnit.Week:
-            end = get_current_market_time() - timedelta(days=7)
-        elif timeframe.unit == TimeFrameUnit.Month:
-            end = get_current_market_time() - timedelta(days=30)
+    # Adjust bars_back to account for outside hours filtering
+    adjusted_bars_back = bars_back
+    if not include_outside_hours and unit.upper() in ["MINUTE", "HOUR"]:
+        # For minute and hour bars, we need to adjust for outside market hours
+        # Approximately 6.5 hours of market hours per day (9:30 AM - 4:00 PM)
+        # vs 24 hours in a full day
+        if unit.upper() == "MINUTE":
+            # For minute bars, multiply by ~3.7 to account for filtering
+            # (24/6.5 = ~3.7)
+            adjusted_bars_back = int(bars_back * 3.7)
+        elif unit.upper() == "HOUR":
+            # For hour bars, multiply by ~4 to account for filtering
+            # (24/6.5 = ~3.7, rounded up)
+            adjusted_bars_back = int(bars_back * 4)
+    
+    start = bars_back_to_datetime(unit, bar_size, adjusted_bars_back)
+    end = get_current_market_time()
+    asof = None
+    if not (is_realtime() and timeframe.unit in [TimeFrameUnit.Minute, TimeFrameUnit.Hour]):
+        asof = get_current_market_time().strftime("%Y-%m-%d")
             
     # Create the request
     request = StockBarsRequest(
@@ -155,7 +169,8 @@ async def get_alpaca_bars(
         start=start,
         end=end,
         adjustment="all",
-        feed="iex",  # todo: switch to SIP when subscribed to real time alpaca data
+        feed="sip",
+        asof=asof,
     )
 
     # Get the bars
@@ -163,9 +178,24 @@ async def get_alpaca_bars(
     if isinstance(bars_df.index, pd.MultiIndex):
         bars_df = bars_df.xs(symbol)
 
-    bars_df.drop(columns=["trade_count"], inplace=True)
+    if "trade_count" in bars_df.columns:
+        bars_df.drop(columns=["trade_count"], inplace=True)
+    if "volume" in bars_df.columns:
+        bars_df["volume"] = bars_df["volume"].astype(int)
     # Convert index timezone to US/Eastern
     bars_df.index = bars_df.index.tz_convert("US/Eastern").tz_localize(None)
+
+    # Filter out outside hours data if requested
+    if not include_outside_hours and unit.upper() in ["MINUTE", "HOUR"]:
+        # Keep only data from 9:30 AM to 4:00 PM ET on weekdays
+        bars_df = bars_df[
+            (bars_df.index.dayofweek < 5) &  # Monday to Friday
+            (
+                ((bars_df.index.hour == 9) & (bars_df.index.minute >= 30)) |  # 9:30 AM or later
+                ((bars_df.index.hour > 9) & (bars_df.index.hour < 16)) |  # 10 AM to 3:59 PM
+                ((bars_df.index.hour == 16) & (bars_df.index.minute == 0))  # 4:00 PM exactly
+            )
+        ]
 
     # Add indicators if requested
     if indicators:
@@ -176,37 +206,64 @@ async def get_alpaca_bars(
     bars_df = bars_df.reset_index()
     bars_df["timestamp"] = bars_df["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S")
     bars_df = bars_df.rename(columns={"timestamp": "datetime"})
+    
+    # If we still don't have enough bars after filtering, try again with a larger multiplier
+    if not include_outside_hours and unit.upper() in ["MINUTE", "HOUR"] and len(bars_df) < original_bars_back:
+        # If this is the first retry (we used the default multiplier)
+        if adjusted_bars_back <= bars_back * 4:
+            logger.info(f"Not enough bars after filtering ({len(bars_df)} < {original_bars_back}). Retrying with larger window.")
+            return await get_alpaca_bars(
+                symbol=symbol,
+                unit=unit,
+                bar_size=bar_size,
+                indicators=indicators,
+                bars_back=original_bars_back * 10,  # Use a much larger multiplier for the retry
+                truncate_bars=truncate_bars,
+                include_outside_hours=include_outside_hours,
+            )
+        else:
+            # If we've already retried with a larger multiplier and still don't have enough,
+            # just return what we have and log a warning
+            logger.warning(
+                f"Could not get {original_bars_back} bars for {symbol} with unit={unit}, "
+                f"bar_size={bar_size}, include_outside_hours={include_outside_hours}. "
+                f"Only got {len(bars_df)} bars."
+            )
+    
     if truncate_bars:
-        bars_df = bars_df.iloc[-original_bars_back:]
+        bars_df = bars_df.iloc[-original_bars_back:] if len(bars_df) >= original_bars_back else bars_df
+    
+    for col in bars_df.columns:
+        if bars_df[col].dtype == "float64":
+            bars_df[col] = bars_df[col].round(3)
 
-    return bars_df.to_json(orient="records", lines=True)
+    return bars_df.to_csv(index=False, date_format="%Y-%m-%d %H:%M:%S")
 
 
 async def plot_alpaca_bars_with_indicators(
-    symbol: str,
-    unit: str,
-    bar_size: int,
-    indicators: str = "",
-    bars_back: Optional[int] = None,
+    symbol: str = Field(..., description="The symbol to plot"),
+    unit: str = Field(..., description="Unit of time for the bars. Possible values are Minute, Hour, Daily, Weekly, Monthly."),
+    bars_back: int = Field(..., description="Number of bars back to fetch."),
+    bar_size: int = Field(..., description="Interval that each bar will consist of"),
+    indicators: Optional[str] = Field(default="", description=f"Optional indicators to plot, comma-separated. Supported: {list(SUPPORTED_INDICATORS.keys())}"),
+    include_outside_hours: bool = Field(default=False, description="Whether to include data from pre-market and post-market sessions."),
 ) -> tuple[Image, str]:
-    """Plot bars with indicators using Alpaca data"""
+    """Get a plot and a csv of the bars and indicators for a given symbol"""
     plot_bar_count = max(bars_back, default_bars_back(unit, bar_size))
-    bars_df = pd.read_json(
-        await get_alpaca_bars(
+    bars_df = pd.read_csv(
+        StringIO(await get_alpaca_bars(
             symbol=symbol,
             unit=unit,
             bar_size=bar_size,
             indicators=indicators,
             bars_back=plot_bar_count,
             truncate_bars=False,
-        ),
-        lines=True,
-        orient="records",
+            include_outside_hours=include_outside_hours,
+        )),
+        parse_dates=True,
+        date_format="%Y-%m-%d %H:%M:%S",
     )
-
-    bars_df["datetime"] = pd.to_datetime(
-        bars_df["datetime"], format="%Y-%m-%d %H:%M:%S"
-    )
+    bars_df["datetime"] = pd.to_datetime(bars_df["datetime"])
     bars_df.set_index("datetime", inplace=True)
     total_time_span = (bars_df.index[-1] - bars_df.iloc[-plot_bar_count:].index[0]).total_seconds() / 60 / 60
     time_span_str = f"{int(math.ceil(total_time_span))} hours"
@@ -229,26 +286,20 @@ async def plot_alpaca_bars_with_indicators(
     # Return both the image and the data
     return (
         Image(data=buf.read(), format="png"),
-        bars_df.iloc[-(bars_back or plot_bar_count):]
-        .to_json(orient="records", lines=True),
+        bars_df.iloc[-(bars_back or plot_bar_count):].to_csv(index=False),
     )
-
-
-async def get_most_recent_bar(symbols: str, bar_size: int, bar_unit: str) -> str:
-    """
-    Get the most recent OHLCV bar for a given symbol, bar size, and bar unit.
-    Possible bar units are: Minute, Hour, Daily, Weekly, Monthly.
-
-    Args:
-        symbols: The symbol to get the most recent bar for (comma separated).
-        bar_size: The size of the bar to get.
-        bar_unit: The unit of the bar to get.
-
-    Returns:
-        The most recent OHLCV bar for the given symbol, bar size, and bar unit in json format.
     
+
+async def get_most_recent_bar(
+    symbol_list: list[str] = Field(..., description="Symbols to get the most recent bar for"),
+    bar_size: int = Field(..., description="The size of the bar to get."),
+    bar_unit: str = Field(..., description="The unit of the bar to get. Possible values are Minute, Hour, Daily, Weekly, Monthly."),
+    include_outside_hours: bool = Field(default=False, description="Whether to include data from pre-market and post-market sessions (only applies to minute and hourly bars)"),
+) -> str:
+    """
+    Get the most recent OHLCV bar for given symbols, bar size, and bar unit.
     Example:
-        symbols: "AAPL,MSFT"
+        symbols: ["AAPL", "MSFT"]
         bar_size: 1
         bar_unit: "Hour"
 
@@ -270,14 +321,13 @@ async def get_most_recent_bar(symbols: str, bar_size: int, bar_unit: str) -> str
             }
         }
     """
-    symbol_list = symbols.split(",")
     dfs = await asyncio.gather(*[
-        get_alpaca_bars(symbol, bar_unit, 1, bar_size) for symbol in symbol_list
+        get_alpaca_bars(symbol, bar_unit, 1, bar_size, indicators="", truncate_bars=False, include_outside_hours=include_outside_hours) for symbol in symbol_list
     ])
     bars = {}
     for df, symbol in zip(dfs, symbol_list):
-        parsed = pd.read_json(df, orient="records", lines=True)
-        ohlcv = parsed.iloc[0].to_dict()
-        del ohlcv["datetime"]
+        parsed = pd.read_csv(StringIO(df))
+        ohlcv = parsed.iloc[-1].to_dict()
         bars[symbol] = ohlcv
+
     return json.dumps(bars)

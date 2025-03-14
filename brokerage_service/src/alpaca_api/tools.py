@@ -8,6 +8,7 @@ from common_lib.alpaca_helpers.async_impl.trading_client import AsyncTradingClie
 from common_lib.alpaca_helpers.simulation.trading_client import SimulationTradingClient
 from common_lib.alpaca_helpers.env import AlpacaSettings
 from common_lib.util import is_market_open
+from pydantic import Field
 
 settings = AlpacaSettings()
 if settings.simulation:
@@ -17,23 +18,16 @@ else:
 
 
 async def place_order(
-    symbol: str,
-    size: float,
-    buy_sell: str,
-    price: float,
-    take_profit: float | None = None,
-    stop_loss: float | None = None,
+    symbol: str = Field(..., description="The symbol of the stock to place an order for"),
+    size: float = Field(..., description="The size of the order"),
+    buy_sell: str = Field(..., description="Either 'Buy' or 'Sell'"),
+    price: float = Field(..., description="The limit price of the order"),
+    take_profit: float | None = Field(None, description="The take profit price, optional"),
+    stop_loss: float | None = Field(None, description="The stop loss price, optional"),
 ) -> Dict[str, Any]:
     """
     Place a limit order for a stock. Optionally include a take profit and stop loss.
-    Args:
-        symbol: The symbol of the stock to place an order for
-        size: The size of the order
-        buy_sell: Either 'Buy' or 'Sell'
-        price: The limit price of the order
-        take_profit: The take profit price, optional
-        stop_loss: The stop loss price, optional
-    
+
     Returns:
         A dictionary containing order details
     
@@ -130,20 +124,14 @@ async def place_order(
     return response
 
 async def modify_order(
-    order_id: str,
-    limit_price: float | None = None,
-    stop_price: float | None = None,
-    size: float | None = None,
+    order_id: str = Field(..., description="The id of the order to modify"),
+    limit_price: float | None = Field(None, description="The new limit price of the order (for limit orders)"),
+    stop_price: float | None = Field(None, description="The new stop price of the order (for stop orders)"),
+    size: float | None = Field(None, description="The new size of the order. If not provided, original order size will be used."),
 ) -> Dict[str, Any]:
     """
     Modify an existing order.
 
-    Args:
-        order_id: The id of the order to modify
-        limit_price: The new limit price of the order (for limit orders), optional. 
-        stop_price: The new stop price of the order (for stop orders), optional.
-        size: The new size of the order, optional. If not provided, original order size will be used.
-    
     Returns:
         A dictionary containing modified order details
     
@@ -202,12 +190,11 @@ async def modify_order(
         "order_status": replaced_order.status.value
     }
 
-async def cancel_order(order_id: str) -> Dict[str, Any]:
+async def cancel_order(
+    order_id: str = Field(..., description="The id of the order to cancel")
+) -> Dict[str, Any]:
     """
     Cancel an existing order.
-
-    Args:
-        order_id: The id of the order to cancel
 
     Returns:
         A dictionary containing cancellation details
@@ -244,13 +231,11 @@ async def cancel_order(order_id: str) -> Dict[str, Any]:
             "order_status": order.status.value
         }
     
-async def liquidate_position(symbol: str) -> Dict[str, Any]:
+async def liquidate_position(
+    symbol: str = Field(..., description="The symbol of the position to liquidate")
+) -> Dict[str, Any]:
     """
     Liquidate 100% of a position in a given symbol. This also cancels all open orders for the symbol.
-
-    Args:
-        symbol: The symbol of the position to liquidate
-
     Returns:
         A dictionary containing liquidation details
     
@@ -285,43 +270,15 @@ async def liquidate_position(symbol: str) -> Dict[str, Any]:
         }
 
 async def place_trailing_stop(
-    symbol: str,
-    size: float,
-    buy_sell: str,
-    trail_percent: float | None = None,
-    trail_price: float | None = None,
+    symbol: str = Field(..., description="The symbol of the stock to place the trailing stop for"),
+    size: float = Field(..., description="The number of shares"),
+    buy_sell: str = Field(..., description="Either 'Buy' or 'Sell'. Use 'Buy' for covering shorts, 'Sell' for closing longs."),
+    trail_percent: float | None = Field(None, description="The percentage to trail by. Must be between 0.01 and 20.0. Cannot be used with trail_price."),
+    trail_price: float | None = Field(None, description="The fixed dollar amount to trail by. Must be > 0. Cannot be used with trail_percent."),
 ) -> Dict[str, Any]:
     """
     Place a trailing stop order. A trailing stop order is designed to protect gains by enabling a trade to remain open and continue to profit as long as the price is moving in the investor's favor.
-
     You must specify either trail_percent OR trail_price, but not both.
-
-    For a SELL trailing stop (protecting a long position):
-    - Using trail_percent:
-        - The stop price will trail the highest price by the trail_percent
-        - Example: If you buy at $100 with 5% trail_percent, and price goes to $120, your stop will be at $114 (5% below highest price)
-        - If price drops to $116, your stop will still be at $114 (it doesn't move down with the price)
-        - the initial stop price is (1 - trail_percent) * price_at_time_of_order, or 95$ in this example.
-    - Using trail_price:
-        - The stop price will trail the highest price by the fixed dollar amount
-        - Example: If you buy at $100 with $2 trail_price, and price goes to $120, your stop will be at $118 ($2 below highest price)
-        - the initial stop price is price_at_time_of_order - trail_price, or 98$ in this example.
-
-    For a BUY trailing stop (protecting a short position):
-    - Using trail_percent:
-        - The stop price will trail the lowest price by the trail_percent
-        - Example: If you short at $100 with 5% trail_percent, and price drops to $80, your stop will be at $84 (5% above lowest price)
-    - Using trail_price:
-        - The stop price will trail the lowest price by the fixed dollar amount
-        - Example: If you short at $100 with $2 trail_price, and price drops to $80, your stop will be at $82 ($2 above lowest price)
-
-    Args:
-        symbol: The symbol of the stock to place the trailing stop for
-        size: The number of shares
-        buy_sell: Either 'Buy' or 'Sell'. Use 'Buy' for covering shorts, 'Sell' for closing longs.
-        trail_percent: The percentage to trail by. Must be between 0.01 and 20.0. Cannot be used with trail_price.
-        trail_price: The fixed dollar amount to trail by. Must be > 0. Cannot be used with trail_percent.
-
     Returns:
         A dictionary containing trailing stop order details
     

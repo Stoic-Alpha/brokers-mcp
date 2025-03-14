@@ -3,15 +3,16 @@ import pandas as pd
 from yahooquery import Ticker
 import json
 from mcp import McpError
+from pydantic import Field
 
 async def get_option_chain(
-    symbol: str,
-    expiration_date: str,
-    max_dollar_distance: int,
-    option_type: Optional[str] = None,
-    in_the_money: Optional[bool] = None,
-    min_absolute_delta: Optional[float] = None,
-    max_absolute_delta: Optional[float] = None,
+    symbol: str = Field(..., description="The stock symbol to get options data for"),
+    expiration_date: str = Field(..., description="Expiration date in format 'YYYY-MM-DD'"),
+    max_dollar_distance: int = Field(..., description="Max dollar distance from the current price. Options with a strike price within this distance will be returned."),
+    option_type: Optional[str] = Field(None, description="Optional filter for option type ('calls' or 'puts')"),
+    in_the_money: Optional[bool] = Field(None, description="Optional filter for in-the-money options"),
+    min_absolute_delta: Optional[float] = Field(None, description="Optional filter for minimum absolute delta. Options with absolute delta greater than this value will be returned."),
+    max_absolute_delta: Optional[float] = Field(None, description="Optional filter for maximum absolute delta. Options with absolute delta less than this value will be returned."),
 ) -> str:
     """
     Get option chain data for a given symbol using yahooquery.
@@ -79,7 +80,9 @@ async def get_option_chain(
         return json.dumps({"error": f"Error fetching option chain: {str(e)}"})
 
 
-async def get_option_expirations(symbol: str) -> str:
+async def get_option_expirations(
+    symbol: str = Field(..., description="The stock symbol to get option expiration dates for")
+) -> str:
     """
     Get available option expiration dates for a given symbol.
     
