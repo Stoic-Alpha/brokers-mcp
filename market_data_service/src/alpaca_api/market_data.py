@@ -124,7 +124,7 @@ def bars_back_to_datetime(
 
 async def get_alpaca_bars(
     symbol: str = Field(..., description="The symbol to fetch bars for"),
-    unit: str = Field(..., description="Unit of time for the bars. Possible values are Minute, Hour, Daily, Weekly, Monthly."),
+    unit: str = Field(..., description="Unit of time for the bars. Possible values are Minute, Hour, Daily, Weekly, Monthly. Must be exactly one of these without numbers"),
     bars_back: int = Field(..., description="Number of bars back to fetch."),
     bar_size: int = Field(..., description="Interval that each bar will consist of"),
     indicators: str = Field(default="", description=f"Optional indicators to plot, comma-separated. Supported: {list(SUPPORTED_INDICATORS.keys())}"),
@@ -132,11 +132,13 @@ async def get_alpaca_bars(
     include_outside_hours: bool = Field(default=False, description="Whether to include data from pre-market and post-market sessions."),
 ) -> str:
     """Get historical bars data for a stock symbol in csv format"""
+    if "hour" in unit.lower():
+        unit = "Hour"
     timeframe = get_timeframe(unit, bar_size)
     original_bars_back = bars_back or default_bars_back(unit, bar_size)
 
     if indicators:
-        min_bars_back = max(indicator_min_bars_back(i) for i in indicators.split(","))
+        min_bars_back = max(indicator_min_bars_back(i.strip()) for i in indicators.split(","))
         bars_back = min_bars_back + (bars_back or 0)
     else:
         bars_back = original_bars_back
@@ -249,6 +251,8 @@ async def plot_alpaca_bars_with_indicators(
     include_outside_hours: bool = Field(default=False, description="Whether to include data from pre-market and post-market sessions."),
 ) -> tuple[Image, str]:
     """Get a plot and a csv of the bars and indicators for a given symbol"""
+    if "hour" in unit.lower():
+        unit = "Hour"
     plot_bar_count = max(bars_back, default_bars_back(unit, bar_size))
     bars_df = pd.read_csv(
         StringIO(await get_alpaca_bars(

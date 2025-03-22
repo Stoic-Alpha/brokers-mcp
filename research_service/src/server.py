@@ -40,20 +40,27 @@ async def scan_from_scanner(
 
 @mcp.tool(name="search_available_columns")
 async def search_available_columns(
-    query: str = Field(..., description="Search term to find matching column names")
+    queries: list[str] = Field(..., description="Search terms to find matching column names")
 ) -> str:
     """
-    Search for available columns in TradingView Screener.
-    For example: when query='Average', the tool will return all the columns that
-    represent averages like {'average_volume_60d_calc', 'EMA20', 'EMA10', 'SMA10', etc.}
+    Search for screener columns in TradingView Screener. Tradingview screener has over 3K 
+    different columns that can be used to screen stocks. This tool can be used to find multiple
+    columns at once by utilizing a list of query terms.
+    Query terms should be short and consist of a single word or phrase.
+    It is encouraged to use as many query terms as possible to find the desired columns.
+    For example: 
+    If you want to find columns that represent change and/or market cap, you can use the query terms:
+    ["change", "market", "cap"]
 
     Returns:
-        str: Set of matching column names as a string
+        str: Set of matching column names
     """
-    if not query:
-        raise ValueError("The query parameter is required")
+    if not queries:
+        raise ValueError("The queries parameter is required")
 
-    matched_columns = index.search(query)
+    matched_columns = []
+    for query in queries:
+        matched_columns.extend(index.search(query))
     if len(matched_columns) == 0:
         return "No columns found, try a different search query"
     else:
@@ -96,21 +103,22 @@ async def get_symbol_summaries(
     Get summaries of important metrics for given symbols.
 
     Returns:
-        str: JSON string containing summary data for the requested symbols
+        str: CSV string containing summary data for the requested symbols
     """
     symbol_list = [s.strip() for s in symbols.split(",")]
     if is_realtime():
         columns = [
-            "name", "close", "volume", "market_cap_basic",
+            "name", "description", "close", "volume", "market_cap_basic",
             "price_52_week_high", "price_52_week_low", "High.3M", "Low.3M",
             "postmarket_high", "postmarket_low", "premarket_high", "premarket_low",
-            "VWAP", "industry", "sector", "change_from_open", "Perf.1M", "Perf.3M",
-            "float_shares_outstanding", "gap", "oper_income_fy", "earnings_release_next_date"
+            "VWAP", "industry", "sector", "change_from_open", "change", "Perf.1M", "Perf.3M",
+            "float_shares_outstanding", "gap", "oper_income_fy", "earnings_release_next_date", "Recommend.All"
         ]
     else:
         columns = [
-            "name", "market_cap_basic","industry", "sector","float_shares_outstanding", "oper_income_fy"
+            "name", "description", "market_cap_basic","industry", "sector","float_shares_outstanding", "oper_income_fy"
         ]
+
     query = (Query()
         .select(*columns)
         .where(Column("name").isin(symbol_list))
@@ -120,10 +128,32 @@ async def get_symbol_summaries(
         result["earnings_release_next_date"] = datetime.fromtimestamp(result["earnings_release_next_date"].iloc[0]).strftime("%Y-%m-%d")
     except:
         pass
+    
+    def format_technical_rating(rating: float) -> str:
+        if rating >= 0.5:
+            return 'Strong Buy'
+        elif rating >= 0.1:
+            return 'Buy'
+        elif rating >= -0.1:
+            return 'Neutral'
+        elif rating >= -0.5:
+            return 'Sell'
+        else:
+            return 'Strong Sell'
+
+    if is_realtime():
+        # todo: handle simulation data
+        result["rating"] = result["Recommend.All"].apply(format_technical_rating)
+        result.rename(columns={"change": "change_from_last_close_%", "change_from_open": "change_from_open_%", "close": "last"}, inplace=True)
+        result.drop(columns=["Recommend.All"], inplace=True)
 
     result["market_cap_basic_millions"] = result["market_cap_basic"] // 1000000
     result.drop(columns=["oper_income_fy", "market_cap_basic"], inplace=True)
-    return result.to_json(orient="records")
+    for c in result.columns:
+        if result[c].dtype == "float64":
+            result[c] = result[c].round(2)
+
+    return result.to_csv(index=False, na_rep="N/A")
 
 @mcp.resource(uri="resource://get_symbol_summary/{symbol}", name="get_symbol_summary")
 async def get_symbol_summary_resource(
@@ -133,7 +163,7 @@ async def get_symbol_summary_resource(
     Get summary of important metrics for a single symbol.
 
     Returns:
-        str: JSON string containing summary data for the requested symbol
+        str: CSV string containing summary data for the requested symbol
     """
     return await get_symbol_summaries(symbol)
 
